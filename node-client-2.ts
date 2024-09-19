@@ -5,11 +5,8 @@ import { mplex } from "@libp2p/mplex";
 import { tcp } from "@libp2p/tcp";
 import { createLibp2p, Libp2p } from "libp2p";
 import { identify } from "@libp2p/identify";
-import { pipe } from "it-pipe";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
-import map from "it-map";
-
 import {
   GhanimaBlockchain,
   Account,
@@ -18,18 +15,20 @@ import {
   Blockchain,
 } from "./index";
 
-import {
-  GossipSub,
-  gossipsub,
-  GossipsubEvents,
-} from "@chainsafe/libp2p-gossipsub";
+import { GossipSub, gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { IBlock, ITransaction } from "./types";
-import { multiaddr } from "multiaddr";
+import map from "it-map";
+import { pipe } from "it-pipe";
+import { GENESIS_BLOCK } from "./genesisBlock";
+
+const ASK_CHAIN_PROTOCOL = "ask_chain";
+
+const ALL_LOCAL_IPS = "/ip4/0.0.0.0/tcp/0";
 
 export const createNode = async () => {
   const node = await createLibp2p({
     addresses: {
-      listen: ["/ip4/0.0.0.0/tcp/0"],
+      listen: [ALL_LOCAL_IPS],
     },
     transports: [tcp()],
     streamMuxers: [yamux(), mplex()],
@@ -50,6 +49,7 @@ export const createNode = async () => {
 
 export async function bootstrapClientNode() {
   const blockchain = new GhanimaBlockchain();
+  blockchain.blocks = [];
   let node: Libp2p<{
     pubsub: GossipSub;
   }> | null = null;
@@ -61,19 +61,56 @@ export async function bootstrapClientNode() {
     node.services.pubsub.subscribe("NEW_TRANSACTION");
     node.services.pubsub.subscribe("NEW_NODE");
 
-    node.addEventListener("peer:connect", async () => {
+    await node.handle(ASK_CHAIN_PROTOCOL, async ({ stream }) => {
+      // Receive JSON data from the remote peer
+      pipe(
+        // Read from the stream (the source)
+        stream.source,
+        // Sink function
+        async function () {
+          await pipe(
+            [uint8ArrayFromString(JSON.stringify(blockchain.blocks))],
+            stream.sink
+          );
+        }
+      );
+    });
+
+    node.addEventListener("peer:discovery", async (e) => {
       if (!identified) {
         identified = true;
-        console.log(node.getConnections()[0].remoteAddr);
 
-        const stream = await node.dialProtocol(
-          node.getConnections()[0].remoteAddr,
-          "/hi/1.0.0"
-        );
+        const firstConnection = e.detail.id;
 
-        await pipe([uint8ArrayFromString("TESTANDO ESSA MERDA")], stream.sink);
+        if (firstConnection) {
+          const stream = await node.dialProtocol(
+            firstConnection,
+            ASK_CHAIN_PROTOCOL
+          );
+
+          pipe(
+            stream,
+            (source) =>
+              map(source, (buf) => uint8ArrayToString(buf.subarray())),
+            async function (source) {
+              // For each chunk of data
+              let totalMessage = "";
+              for await (const msg of source) {
+                totalMessage += msg;
+              }
+
+              console.log(JSON.parse(totalMessage));
+              console.log("==== CHEGOU AQUI NO NODE NOVO! =====");
+
+              const chain = JSON.parse(totalMessage);
+
+              handleNewChain(chain as unknown as Block[]);
+
+              stream.close();
+            }
+          );
+        }
       } else {
-        node.removeEventListener("peer:connect");
       }
     });
 
@@ -92,9 +129,6 @@ export async function bootstrapClientNode() {
           break;
         case "NEW_TRANSACTION":
           handleNewTransaction(JSON.parse(content));
-          break;
-        case "NEW_NODE":
-          handleNewNode(content);
           break;
       }
     });
@@ -115,7 +149,6 @@ export async function bootstrapClientNode() {
   function handleNewNode(address: string) {
     if (address) {
       blockchain.addresses.push(address);
-      console.log("hi", blockchain.getAddresses());
     }
   }
 

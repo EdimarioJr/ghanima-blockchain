@@ -15,19 +15,20 @@ import {
   Blockchain,
 } from "./index";
 
-import {
-  GossipSub,
-  gossipsub,
-  GossipsubEvents,
-} from "@chainsafe/libp2p-gossipsub";
+import { GossipSub, gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { IBlock, ITransaction } from "./types";
 import map from "it-map";
 import { pipe } from "it-pipe";
+import { GENESIS_BLOCK } from "./genesisBlock";
+
+const ASK_CHAIN_PROTOCOL = "ask_chain";
+
+const ALL_LOCAL_IPS = "/ip4/0.0.0.0/tcp/0";
 
 export const createNode = async () => {
   const node = await createLibp2p({
     addresses: {
-      listen: ["/ip4/0.0.0.0/tcp/0"],
+      listen: [ALL_LOCAL_IPS],
     },
     transports: [tcp()],
     streamMuxers: [yamux(), mplex()],
@@ -52,34 +53,64 @@ export async function bootstrapClientNode() {
     pubsub: GossipSub;
   }> | null = null;
   node = (await createNode()) as any;
+  let identified = false;
 
   if (node) {
     node.services.pubsub.subscribe("NEW_CHAIN");
     node.services.pubsub.subscribe("NEW_TRANSACTION");
     node.services.pubsub.subscribe("NEW_NODE");
 
-    await node.handle("/hi/1.0.0", async ({ stream }) => {
+    await node.handle(ASK_CHAIN_PROTOCOL, async ({ stream }) => {
       // Receive JSON data from the remote peer
       pipe(
         // Read from the stream (the source)
         stream.source,
-        // (source) => {
-        //   console.log(1)
-        //   return source
-        // },
-        // Decode length-prefixed data
-        // (source) => lp.decode(source),
-        // Turn buffers into strings
-        (source) => map(source, (buf) => uint8ArrayToString(buf.subarray())),
         // Sink function
-        async function (source) {
-          // For each chunk of data
-          for await (const msg of source) {
-            // Output the data as a utf8 string
-            console.log("> >>>>>> " + msg.toString().replace("\n", ""));
-          }
+        async function () {
+          await pipe(
+            [uint8ArrayFromString(JSON.stringify(blockchain.blocks))],
+            stream.sink
+          );
         }
       );
+    });
+
+    node.addEventListener("peer:discovery", async (e) => {
+      if (!identified) {
+        identified = true;
+
+        const firstConnection = e.detail.id;
+
+        if (firstConnection) {
+          const stream = await node.dialProtocol(
+            firstConnection,
+            ASK_CHAIN_PROTOCOL
+          );
+
+          pipe(
+            stream,
+            (source) =>
+              map(source, (buf) => uint8ArrayToString(buf.subarray())),
+            async function (source) {
+              // For each chunk of data
+              let totalMessage = "";
+              for await (const msg of source) {
+                totalMessage += msg;
+              }
+
+              console.log(JSON.parse(totalMessage));
+              console.log("==== CHEGOU AQUI NO NODE NOVO! =====");
+
+              const chain = JSON.parse(totalMessage);
+
+              handleNewChain(chain as unknown as Block[]);
+
+              stream.close();
+            }
+          );
+        }
+      } else {
+      }
     });
 
     node.services.pubsub.addEventListener("message", (message) => {

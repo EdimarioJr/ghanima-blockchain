@@ -8,6 +8,7 @@ import {
 
 import crypto from "crypto";
 import elliptic from "elliptic";
+import { GENESIS_BLOCK } from "./genesisBlock";
 
 const EC = elliptic.ec;
 
@@ -121,7 +122,7 @@ export class Block implements IBlock {
 }
 
 export class Blockchain implements IBlockchain {
-  blocks: Block[];
+  blocks: IBlock[];
   addresses: string[];
   transactionsPool: Transaction[];
   currentDifficulty: number;
@@ -170,6 +171,7 @@ export class Blockchain implements IBlockchain {
 
   static isChainValid(blocks: IBlock[]): boolean {
     return blocks.every((block, index) => {
+      // GENESIS BLOCK
       if (index === 0) return true;
       return block.previous === blocks[index - 1].hash;
     });
@@ -189,11 +191,11 @@ export class Blockchain implements IBlockchain {
     return this.blocks.length;
   }
 
-  getLastBlock(): Block {
+  getLastBlock(): IBlock {
     return this.blocks[this.blocks.length - 1];
   }
 
-  getChain(): Block[] {
+  getChain(): IBlock[] {
     return this.blocks;
   }
 
@@ -266,19 +268,7 @@ export class GhanimaBlockchain
       minterAddress: MINTER.getPublicKey(),
     });
     this.minter = MINTER;
-    this.createGenesisBlock();
-  }
-
-  createGenesisBlock() {
-    this.createAccount(MINTER.getPublicKey());
-    this.transactionsPool.push(
-      new Transaction({
-        from: this.minter.getPublicKey(),
-        to: this.minter.getPublicKey(),
-        amount: 10000000000000,
-      })
-    );
-    this.createBlock({ minerAccount: MINTER });
+    this.blocks = [GENESIS_BLOCK];
   }
 }
 

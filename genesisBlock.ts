@@ -1,0 +1,17 @@
+export const GENESIS_BLOCK = {
+  data: [
+    {
+      from: "04a39fadaf4525ba488b9efc165f36b16dd28244c30730d06554b7c267ec1db18fa9b0b4a50b8306b2eb5b73ec18a7943e5732b98373f874f8e304be7e45362f4d",
+      to: "04a39fadaf4525ba488b9efc165f36b16dd28244c30730d06554b7c267ec1db18fa9b0b4a50b8306b2eb5b73ec18a7943e5732b98373f874f8e304be7e45362f4d",
+      amount: 10000000000000,
+      signature: "",
+    },
+  ],
+  previous: "",
+  author:
+    "040d6dba469f927b6201c5d27f95e67da8011e665a1d84802ec90b93c78fb300c7c07cad7be79c5fe941026c82e5ac1991b0aaad33007254122709f83c21f7395b",
+  nonce: 7904,
+  timestamp: 682,
+  difficulty: 3,
+  hash: "00079c9c84017673bbbe28ad462204d9097ad949f0d8b3f3381b028abaf3a27a",
+};
