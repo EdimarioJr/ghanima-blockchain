@@ -19,7 +19,6 @@ import { GossipSub, gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { IBlock, ITransaction } from "./types";
 import map from "it-map";
 import { pipe } from "it-pipe";
-import { GENESIS_BLOCK } from "./genesisBlock";
 
 const ASK_CHAIN_PROTOCOL = "ask_chain";
 
@@ -68,7 +67,7 @@ export async function bootstrapClientNode() {
         // Sink function
         async function () {
           await pipe(
-            [uint8ArrayFromString(JSON.stringify(blockchain.blocks))],
+            [uint8ArrayFromString(JSON.stringify(blockchain.getChain()))],
             stream.sink
           );
         }
@@ -114,11 +113,6 @@ export async function bootstrapClientNode() {
     });
 
     node.services.pubsub.addEventListener("message", (message) => {
-      console.log(
-        "aaa",
-        message.detail.topic,
-        JSON.stringify(new TextDecoder().decode(message.detail.data))
-      );
       const content = JSON.stringify(
         new TextDecoder().decode(message.detail.data)
       );
@@ -141,7 +135,7 @@ export async function bootstrapClientNode() {
       Blockchain.isChainValid(chain) &&
       chain.length > blockchain.getChainSize()
     ) {
-      blockchain.blocks = chain.map((block) => new Block(block));
+      blockchain.setChain(chain);
       blockchain.transactionsPool = [];
     }
   }
@@ -150,7 +144,7 @@ export async function bootstrapClientNode() {
 
   function handleNewNode(address: string) {
     if (address) {
-      blockchain.addresses.push(address);
+      blockchain.addAddress(address);
       console.log("hi", blockchain.getAddresses());
     }
   }

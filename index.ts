@@ -6,37 +6,36 @@ import {
   ITransaction,
 } from "./types";
 
-import crypto from "crypto";
+import crypto, { BinaryLike } from "crypto";
 import elliptic from "elliptic";
 import { GENESIS_BLOCK } from "./genesisBlock";
+import { MINTER_PUBLIC_ADDRESS } from "./config";
 
 const EC = elliptic.ec;
 
 const signatureCrypto = new EC("secp256k1");
 
 export class Account implements IAccount {
-  keyPair: any;
+  keyPair: elliptic.ec.KeyPair;
   publicKey: string;
   privateKey: string;
 
   constructor() {
     this.keyPair = signatureCrypto.genKeyPair();
-    this.publicKey = this.keyPair.getPublic().encode("hex");
-    // this.privateKey = this.keyPair.getPrivate().encode("hex");
+    this.publicKey = this.keyPair.getPublic().encode("hex", true);
+    this.privateKey = this.keyPair.getPrivate().toString();
   }
 
   getPublicKey() {
-    return this.keyPair.getPublic().encode("hex");
+    return this.publicKey;
   }
 
-  sign(data) {
+  sign(data: BinaryLike) {
     return this.keyPair
       .sign(crypto.createHash("sha256").update(data).digest("hex"), "base64")
       .toDER("hex");
   }
 }
-
-export const MINTER = new Account();
 
 export class Transaction implements ITransaction {
   from: string;
@@ -55,7 +54,7 @@ export class Transaction implements ITransaction {
     return (
       from &&
       to &&
-      (from !== to || from === MINTER.getPublicKey()) &&
+      (from !== to || from === MINTER_PUBLIC_ADDRESS) &&
       amount > 0
     );
   }
@@ -70,15 +69,18 @@ export class Transaction implements ITransaction {
     );
   }
 
-  sign(account) {
-    if (account.getPublicKey() === this.from) {
-      this.signature = account.sign(this.from + this.to + this.amount);
+  sign(account: Account) {
+    const fromIsAuthor = account.getPublicKey() === this.from;
+    if (fromIsAuthor) {
+      this.signature = account.sign(
+        this.from.concat(this.to, String(this.amount))
+      );
     }
   }
 }
 
 export class Block implements IBlock {
-  data: Transaction[];
+  data: ITransaction[];
   previous: string;
   author: string;
   nonce: number;
@@ -96,35 +98,63 @@ export class Block implements IBlock {
     this.hash = this.generateHash();
   }
 
+  static isValid({
+    data,
+    timestamp,
+    previous,
+    author,
+    difficulty,
+    hash,
+  }: IBlock) {
+    return (
+      data.length &&
+      data.every((transaction) => Transaction.isValid(transaction)) &&
+      timestamp <= new Date().getUTCMilliseconds() &&
+      Block.hashIsSolved({ hash, difficulty }) &&
+      previous &&
+      author
+    );
+  }
+
+  static hashIsSolved({
+    hash,
+    difficulty,
+  }: Pick<IBlock, "hash" | "difficulty">): boolean {
+    return hash.startsWith(Array.from(Array(difficulty), (_) => "0").join(""));
+  }
+
   generateHash() {
     return crypto
       .createHash("sha256")
       .update(
-        JSON.stringify(this.data) +
-          this.previous +
-          this.author +
-          this.nonce +
-          this.timestamp
+        JSON.stringify(this.data).concat(
+          this.previous,
+          this.author,
+          String(this.nonce),
+          String(this.timestamp)
+        )
       )
       .digest("hex");
   }
 
-  mine() {
-    while (
-      !this.hash.startsWith(
-        Array.from(Array(this.difficulty), (_) => "0").join("")
-      )
-    ) {
-      this.nonce++;
-      this.hash = this.generateHash();
-    }
+  async mine() {
+    return new Promise((resolve) => {
+      while (
+        !Block.hashIsSolved({ hash: this.hash, difficulty: this.difficulty })
+      ) {
+        this.nonce++;
+        this.hash = this.generateHash();
+      }
+
+      resolve(true);
+    });
   }
 }
 
 export class Blockchain implements IBlockchain {
   blocks: IBlock[];
   addresses: string[];
-  transactionsPool: Transaction[];
+  transactionsPool: ITransaction[];
   currentDifficulty: number;
   minerReward: number;
   minterAddress: string;
@@ -146,7 +176,23 @@ export class Blockchain implements IBlockchain {
     this.minterAddress = minterAddress;
   }
 
-  createBlock({ minerAccount }: { minerAccount: Account }) {
+  static isChainValid(blocks: IBlock[]): boolean {
+    return blocks.every((block, index) => {
+      if (Block.isValid(block)) {
+        if (index === 0)
+          // GENESIS BLOCK
+          return true;
+        return block.previous === blocks[index - 1].hash;
+      }
+      return false;
+    });
+  }
+
+  async createBlock({
+    minerAccount,
+  }: {
+    minerAccount: Account;
+  }): Promise<IBlock | null> {
     const previousHash = this.blocks[this.blocks.length - 1]?.hash ?? "";
 
     const minerTransaction = new Transaction({
@@ -162,19 +208,16 @@ export class Blockchain implements IBlockchain {
       author: minerAccount.getPublicKey(),
       difficulty: this.currentDifficulty,
     });
-    newBlock.mine();
+    await newBlock.mine();
+
+    // Check if somebody did already mined a new block with the current transactions
     if (this.transactionsPool.length) {
       this.transactionsPool = [];
       this.blocks.push(newBlock);
+      return newBlock;
     }
-  }
 
-  static isChainValid(blocks: IBlock[]): boolean {
-    return blocks.every((block, index) => {
-      // GENESIS BLOCK
-      if (index === 0) return true;
-      return block.previous === blocks[index - 1].hash;
-    });
+    return null;
   }
 
   getChainBrokenIndex(): number {
@@ -200,19 +243,22 @@ export class Blockchain implements IBlockchain {
   }
 
   getAddressAmount(address: string): number {
-    let amount = 0;
-    this.blocks.forEach((block) => {
-      block.data.forEach((transaction) => {
-        if (transaction.to === address) {
-          amount += transaction.amount;
-          return;
-        }
-        if (transaction.from === address) {
-          amount -= transaction.amount;
-        }
+    if (address) {
+      let amount = 0;
+      this.blocks.forEach((block) => {
+        block.data.forEach((transaction) => {
+          if (transaction.to === address) {
+            amount += transaction.amount;
+            return;
+          }
+          if (transaction.from === address) {
+            amount -= transaction.amount;
+          }
+        });
       });
-    });
-    return amount;
+      return amount;
+    }
+    return 0;
   }
 
   createTransaction({
@@ -222,18 +268,21 @@ export class Blockchain implements IBlockchain {
     transaction: Transaction;
     account: Account;
   }) {
-    if (Transaction.isValid(transaction)) {
-      const isTransactionFromHasMoney =
-        this.getAddressAmount(transaction.from) >= transaction.amount;
-      const isParticipantsInBlockChain =
-        this.isTransactionParticipantInBlockchain({ ...transaction });
-      if (isTransactionFromHasMoney && isParticipantsInBlockChain) {
-        transaction.sign(account);
-        if (transaction.isValidWithSignature()) {
-          this.transactionsPool.push(transaction);
-        }
-      }
-    }
+    if (!Transaction.isValid(transaction)) return null;
+
+    const isTransactionFromHasMoney =
+      this.getAddressAmount(transaction.from) >= transaction.amount;
+    const isParticipantsInBlockChain =
+      this.isTransactionParticipantInBlockchain({ ...transaction });
+
+    if (!(isTransactionFromHasMoney && isParticipantsInBlockChain)) return null;
+
+    transaction.sign(account);
+
+    if (!transaction.isValidWithSignature()) return null;
+
+    this.transactionsPool.push(transaction);
+    return transaction;
   }
 
   isTransactionParticipantInBlockchain({
@@ -246,12 +295,16 @@ export class Blockchain implements IBlockchain {
     return this.addresses.includes(from) && this.addresses.includes(to);
   }
 
-  createAccount(address: string) {
-    this.addresses.push(address);
+  addAddress(address: string) {
+    this.addresses = [...new Set([...this.addresses, address])];
   }
 
   getAddresses() {
     return this.addresses;
+  }
+
+  setChain(chain: IBlock[]) {
+    if (Blockchain.isChainValid(chain)) this.blocks = chain;
   }
 }
 
@@ -259,15 +312,13 @@ export class GhanimaBlockchain
   extends Blockchain
   implements IGhanimaBlockchain
 {
-  minter: Account;
-
   constructor() {
     super({
       initialDifficulty: 3,
       minerReward: 50,
-      minterAddress: MINTER.getPublicKey(),
+      minterAddress: MINTER_PUBLIC_ADDRESS,
     });
-    this.minter = MINTER;
+
     this.blocks = [GENESIS_BLOCK];
   }
 }

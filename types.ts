@@ -29,6 +29,4 @@ export interface IBlockchain {
   minterAddress: string;
 }
 
-export interface IGhanimaBlockchain extends IBlockchain {
-  minter: IAccount;
-}
+export interface IGhanimaBlockchain extends IBlockchain {}

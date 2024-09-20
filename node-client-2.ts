@@ -7,19 +7,12 @@ import { createLibp2p, Libp2p } from "libp2p";
 import { identify } from "@libp2p/identify";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
-import {
-  GhanimaBlockchain,
-  Account,
-  Block,
-  Transaction,
-  Blockchain,
-} from "./index";
+import { GhanimaBlockchain, Block, Blockchain } from "./index";
 
 import { GossipSub, gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { IBlock, ITransaction } from "./types";
 import map from "it-map";
 import { pipe } from "it-pipe";
-import { GENESIS_BLOCK } from "./genesisBlock";
 
 const ASK_CHAIN_PROTOCOL = "ask_chain";
 
